@@ -1,0 +1,20 @@
+apiVersion: v2
+name: knowledge-assistant
+description: Knowledge Assistant agent with an internal RAG (knowledge) MCP sidecar, a Brave Search web MCP sidecar, DevUI, and Redis memory
+type: application
+version: 0.1.0
+appVersion: "1.0.0"
+keywords:
+  - agent
+  - knowledge
+  - rag
+  - vector-search
+  - mcp
+  - brave-search
+  - redis
+  - devui
+maintainers:
+  - name: knowledge-assistant
+
+# No sub-chart dependencies — Redis is deployed as a standalone StatefulSet
+# in the 'redis' namespace via the core stack. Set redisUrl in values.yaml.

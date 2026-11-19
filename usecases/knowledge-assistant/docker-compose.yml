@@ -1,0 +1,206 @@
+# Knowledge Assistant — Local Development Stack
+# Runs the agent + internal knowledge MCP server + Brave Search MCP server +
+# pgvector (Postgres) + Redis without Kubernetes. Set OPENAI_BASE_URL and
+# OPENAI_API_KEY to point at your running LiteLLM (used both for chat and for
+# embeddings), EMBEDDING_MODEL to an embedding model it serves, and BRAVE_API_KEY
+# for web search. On a Toolkit Manager stack LiteLLM is
+# https://litellm.<base_domain_name>/v1 with a LiteLLM (virtual or master) key;
+# the host must resolve to the eg-gateway IP and trust its CA
+# (env/<env>/logs/ai-solutions-ca.crt).
+#
+# These are the same variable names deploy.sh and the Helm chart use, so one set of
+# exports works for both local and cluster deploys. LITELLM_URL / LITELLM_API_KEY
+# are still honoured as fallbacks for compatibility with the repo-root config.env.
+#
+# Usage:
+#   export OPENAI_BASE_URL=https://litellm.solutions.ai/v1
+#   export OPENAI_API_KEY=sk-your-key
+#   export MODEL_NAME=qwen2-5-coder-14b              # must support tool calling
+#   export EMBEDDING_MODEL=bge-base-en               # must be served by LiteLLM
+#   export BRAVE_API_KEY=your-brave-search-api-key   # https://api-dashboard.search.brave.com/
+#   docker compose up --build
+#
+# This compose file runs its own local pgvector for offline dev; in-cluster the
+# app instead uses the Agent Toolkit's shared pgvector.
+
+services:
+
+  pgvector:
+    image: pgvector/pgvector:pg16
+    container_name: knowledge-assistant-pgvector
+    environment:
+      POSTGRES_DB: "knowledge"
+      POSTGRES_USER: "knowledge"
+      POSTGRES_PASSWORD: "${PGPASSWORD:-knowledge}"
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgvector-data:/var/lib/postgresql/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U knowledge -d knowledge"]
+      interval: 10s
+      timeout: 5s
+      start_period: 10s
+      retries: 5
+
+  knowledge-mcp:
+    image: knowledge-mcp:latest
+    build:
+      context: ./src
+      dockerfile: Dockerfile.mcp
+      args:
+        http_proxy: "${http_proxy:-}"
+        https_proxy: "${https_proxy:-}"
+        no_proxy: "${no_proxy:-}"
+        HTTP_PROXY: "${HTTP_PROXY:-${http_proxy:-}}"
+        HTTPS_PROXY: "${HTTPS_PROXY:-${https_proxy:-}}"
+        NO_PROXY: "${NO_PROXY:-${no_proxy:-}}"
+    container_name: knowledge-mcp
+    cap_drop:
+      - ALL
+    environment:
+      MCP_HOST: "0.0.0.0"
+      MCP_PORT: "8000"
+      # LiteLLM embeddings (OpenAI-compatible). LITELLM_* are legacy aliases.
+      OPENAI_BASE_URL: "${OPENAI_BASE_URL:-${LITELLM_URL:-http://host.docker.internal:4000/v1}}"
+      OPENAI_API_KEY: "${OPENAI_API_KEY:-${LITELLM_API_KEY:-sk-placeholder}}"
+      EMBEDDING_MODEL: "${EMBEDDING_MODEL:-bge-base-en}"
+      # Your documents: ./src/docs is mounted below, so adding files only needs
+      # `docker compose restart knowledge-mcp` (no rebuild).
+      INCLUDE_SAMPLE_DOCS: "${INCLUDE_SAMPLE_DOCS:-true}"
+      # pgvector connection
+      PGHOST: "pgvector"
+      PGPORT: "5432"
+      PGDATABASE: "knowledge"
+      PGUSER: "knowledge"
+      PGPASSWORD: "${PGPASSWORD:-knowledge}"
+      # gateway must be reachable; pgvector must not go through a proxy
+      http_proxy: "${http_proxy:-}"
+      https_proxy: "${https_proxy:-}"
+      no_proxy: "${no_proxy:-},pgvector,localhost,127.0.0.1"
+      HTTP_PROXY: "${HTTP_PROXY:-${http_proxy:-}}"
+      HTTPS_PROXY: "${HTTPS_PROXY:-${https_proxy:-}}"
+      NO_PROXY: "${NO_PROXY:-${no_proxy:-}},pgvector,localhost,127.0.0.1"
+    volumes:
+      - ./src/docs:/app/docs:ro
+    ports:
+      - "8000:8000"
+    depends_on:
+      pgvector:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import socket; s=socket.socket(); s.connect(('localhost', 8000)); s.close()"]
+      interval: 15s
+      timeout: 5s
+      start_period: 30s
+      retries: 5
+
+  brave-mcp:
+    image: knowledge-brave-mcp:latest
+    build:
+      context: ./src
+      dockerfile: Dockerfile.brave
+      args:
+        http_proxy: "${http_proxy:-}"
+        https_proxy: "${https_proxy:-}"
+        no_proxy: "${no_proxy:-}"
+        HTTP_PROXY: "${HTTP_PROXY:-${http_proxy:-}}"
+        HTTPS_PROXY: "${HTTPS_PROXY:-${https_proxy:-}}"
+        NO_PROXY: "${NO_PROXY:-${no_proxy:-}}"
+    container_name: knowledge-brave-mcp
+    cap_drop:
+      - ALL
+    environment:
+      BRAVE_MCP_TRANSPORT: "http"
+      BRAVE_MCP_HOST: "0.0.0.0"
+      BRAVE_MCP_PORT: "8080"
+      BRAVE_API_KEY: "${BRAVE_API_KEY:-}"
+      # Runtime proxy for api.search.brave.com (build args above only cover npm).
+      # NODE_USE_ENV_PROXY makes Node's built-in fetch honour these vars.
+      NODE_USE_ENV_PROXY: "1"
+      http_proxy: "${http_proxy:-}"
+      https_proxy: "${https_proxy:-}"
+      no_proxy: "${no_proxy:-},localhost,127.0.0.1"
+      HTTP_PROXY: "${HTTP_PROXY:-${http_proxy:-}}"
+      HTTPS_PROXY: "${HTTPS_PROXY:-${https_proxy:-}}"
+      NO_PROXY: "${NO_PROXY:-${no_proxy:-}},localhost,127.0.0.1"
+    ports:
+      - "8080:8080"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('net').connect(8080,'localhost').on('connect',p=>process.exit(0)).on('error',()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      start_period: 15s
+      retries: 3
+
+  knowledge-assistant:
+    image: knowledge-assistant:latest
+    build:
+      context: ./src
+      dockerfile: Dockerfile
+      args:
+        http_proxy: "${http_proxy:-}"
+        https_proxy: "${https_proxy:-}"
+        no_proxy: "${no_proxy:-}"
+        HTTP_PROXY: "${HTTP_PROXY:-${http_proxy:-}}"
+        HTTPS_PROXY: "${HTTPS_PROXY:-${https_proxy:-}}"
+        NO_PROXY: "${NO_PROXY:-${no_proxy:-}}"
+    container_name: knowledge-assistant
+    cap_drop:
+      - ALL
+    ports:
+      - "8090:8090"
+    environment:
+      # LITELLM_* are legacy aliases for OPENAI_BASE_URL / OPENAI_API_KEY.
+      OPENAI_BASE_URL: "${OPENAI_BASE_URL:-${LITELLM_URL:-http://host.docker.internal:4000/v1}}"
+      OPENAI_API_KEY: "${OPENAI_API_KEY:-${LITELLM_API_KEY:-sk-placeholder}}"
+      MODEL_NAME: "${MODEL_NAME:-qwen2-5-coder-14b}"
+      KNOWLEDGE_MCP_URL: "http://knowledge-mcp:8000/mcp"
+      BRAVE_MCP_URL: "http://brave-mcp:8080/mcp"
+      ENABLE_WEB_SEARCH: "${ENABLE_WEB_SEARCH:-true}"
+      REDIS_URL: "redis://redis-stack:6379"
+      ENABLE_MEMORY: "true"
+      http_proxy: "${http_proxy:-}"
+      https_proxy: "${https_proxy:-}"
+      # sidecars and redis must resolve without the proxy
+      no_proxy: "${no_proxy:-},knowledge-mcp,brave-mcp,redis-stack,localhost,127.0.0.1"
+      HTTP_PROXY: "${HTTP_PROXY:-${http_proxy:-}}"
+      HTTPS_PROXY: "${HTTPS_PROXY:-${https_proxy:-}}"
+      NO_PROXY: "${NO_PROXY:-${no_proxy:-}},knowledge-mcp,brave-mcp,redis-stack,localhost,127.0.0.1"
+    depends_on:
+      knowledge-mcp:
+        condition: service_healthy
+      brave-mcp:
+        condition: service_healthy
+      redis-stack:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import socket; s=socket.socket(); s.connect(('localhost', 8090)); s.close()"]
+      interval: 30s
+      timeout: 10s
+      start_period: 15s
+      retries: 3
+
+  redis-stack:
+    image: redis/redis-stack-server:7.4.0-v8
+    container_name: knowledge-assistant-redis
+    cap_drop:
+      - ALL
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  redis-data:
+  pgvector-data:

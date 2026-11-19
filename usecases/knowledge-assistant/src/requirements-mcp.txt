@@ -1,0 +1,21 @@
+# Model Context Protocol SDK — provides mcp.server.fastmcp.FastMCP.
+# NOTE: this is the official `mcp` package, NOT the standalone `fastmcp` project.
+# Capped below 2.0: mcp 2.x renamed FastMCP to MCPServer and changed the import
+# path, which server.py does not use.
+mcp==1.30.0
+
+# ASGI server backing the Streamable HTTP transport.
+uvicorn==0.53.0
+
+# PostgreSQL driver (psycopg 3). [binary] ships prebuilt wheels so no libpq /
+# compiler is needed in the container. Used to talk to the pgvector store.
+psycopg[binary]>=3.1.0
+
+# OpenAI-compatible client — used to call the LiteLLM /v1/embeddings
+# endpoint to embed documents and queries for pgvector similarity search.
+openai>=1.40.0
+
+# Document parsers for the docs-folder loader (mcp_server/loader.py): PDF text
+# extraction and Word (.docx) paragraphs/tables. Pure Python, no system deps.
+pypdf>=4.0.0
+python-docx>=1.1.0

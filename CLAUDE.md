@@ -39,6 +39,7 @@ Current use cases (directory = namespace; host in parentheses):
 - `coding-agent` (`coding-agent-langgraph.<base>`, release `coding-agent-langgraph`): LangGraph, Agent Sandbox code execution, API-only with a Bearer `DEVUI_AUTH_TOKEN`.
 - `customer-support-agent` (`customer-support-agent.<base>`): Streamlit UI at `/`, FastAPI at `/api`+`/v1`, SQLite demo data, RediSearch memory with the `bge-base-en` embedding model. It has **no user auth**.
 - `deep-research-agent` (`deep-research-agent.<base>`, optional `-dashboard` host): LangGraph web research; needs `TAVILY_API_KEY`; SQLite on a PVC; 3600s route timeout for SSE.
+- `knowledge-assistant` (`knowledge-assistant.<base>`): Microsoft Agent Framework with two MCP sidecars: RAG over the shared pgvector (`pgvector_enabled`, secret `pgvector/pgvector-credentials` key `DATABASE_URL`) and optional Brave Search (`BRAVE_API_KEY`). Redis memory takes the password by reference: `deploy.sh` copies only the `REDIS_PASSWORD` key into the namespace.
 
 `customer-support-agent` and `deep-research-agent` read `LLM_BASE_URL`/`LLM_API_KEY`/`LLM_MODEL`. Their
 deploy.sh maps the dispatcher's `OPENAI_BASE_URL`/`OPENAI_API_KEY`/`MODEL_NAME` onto those.

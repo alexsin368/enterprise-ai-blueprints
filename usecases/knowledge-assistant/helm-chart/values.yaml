@@ -1,0 +1,233 @@
+# Default values for knowledge-assistant.
+# Override these in a values file or with --set on the command line.
+
+# ---------------------------------------------------------------------------
+# ServiceAccount
+# Dedicated ServiceAccount for the knowledge-assistant pod. No RBAC is needed —
+# there is no Kubernetes sandbox to manage.
+# ---------------------------------------------------------------------------
+serviceAccount:
+  create: true
+
+# ---------------------------------------------------------------------------
+# Knowledge Assistant agent (container 1)
+# ---------------------------------------------------------------------------
+agent:
+  replicaCount: 1
+
+  image:
+    repository: knowledge-assistant   # Replace with your registry/image, e.g. ghcr.io/myorg/knowledge-assistant
+    tag: latest
+    pullPolicy: IfNotPresent
+
+  # LLM configuration – openaiApiKey is required
+  openaiApiKey: ""            # REQUIRED – set via --set or a separate secret values file
+  devuiAuthToken: ""          # REQUIRED – auth token for DevUI when bound to non-loopback host
+  openaiBaseUrl: "http://litellm.litellm.svc.cluster.local:4000/v1"   # Intel Inference Toolkit LiteLLM
+  # Langfuse observability (optional)
+  langfusePublicKey: ""
+  langfuseSecretKey: ""
+  langfuseHost: ""              # -> LANGFUSE_HOST, e.g. http://langfuse-web.langfuse.svc.cluster.local:3000
+  langfuseEnableSensitiveData: "true"
+  # modelName must be a model ID registered in LiteLLM (or a router name it
+  # serves) and must support tool/function calling for the MCP tools to be
+  # invoked, e.g. qwen2-5-coder-14b.
+  modelName: ""   # REQUIRED – set at deploy time
+
+  # URL of the internal knowledge (RAG) MCP server. In the sidecar topology this
+  # is loopback.
+  knowledgeMcpUrl: "http://localhost:8000/mcp"
+  # URL of the Brave Search (web) MCP server. Also a loopback sidecar.
+  braveMcpUrl: "http://localhost:8080/mcp"
+  # Toggle web search. When false, the agent uses the internal knowledge base only
+  # and the Brave sidecar can be disabled (see mcp.brave.enabled).
+  enableWebSearch: "true"
+
+  # Enable text-only Redis conversational memory
+  enableMemory: "true"
+
+  # Proxy bypass list – cluster-internal traffic must not go through the corporate proxy
+  noProxy: "localhost,127.0.0.1,intel.com,.svc,.svc.cluster.local,.default.svc.cluster.local,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"
+
+  service:
+    type: ClusterIP
+    port: 8090
+    # nodePort: 30090   # Uncomment when type is NodePort
+
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: "1"
+      memory: 1Gi
+
+  # Node affinity. Multi-node clusters installed by Toolkit Manager label nodes
+  # workload-class=platform|inference.
+  # Empty = schedule anywhere. Example soft preference:
+  #   affinity:
+  #     nodeAffinity:
+  #       preferredDuringSchedulingIgnoredDuringExecution:
+  #         - weight: 50
+  #           preference:
+  #             matchExpressions:
+  #               - key: workload-class
+  #                 operator: In
+  #                 values: ["platform"]
+  affinity: {}
+
+# ---------------------------------------------------------------------------
+# MCP sidecars (containers 2 & 3 — in the same pod as the agent)
+# Container hardening for both sidecars is set as literal securityContext blocks
+# directly in templates/deployment.yaml (so static IaC scanners can verify it).
+# ---------------------------------------------------------------------------
+mcp:
+  # Internal knowledge (RAG) MCP server. Serves search/retrieval tools over
+  # Streamable HTTP on port 8000, backed by the Agent Toolkit's shared pgvector
+  # store (see the `pgvector` block below) of synthetic internal documents
+  # embedded via LiteLLM. Not exposed via a Service (loopback only).
+  knowledge:
+    image:
+      repository: knowledge-mcp   # Replace with your registry/image
+      tag: latest
+      pullPolicy: IfNotPresent
+
+    port: 8000
+
+    # Embedding model used to vectorize documents and queries. Must be a model
+    # id served by LiteLLM that exposes /v1/embeddings. bge-base-en is the
+    # Inference Toolkit catalog name for BAAI/bge-base-en-v1.5 (add it to
+    # llm_services_autodeploy_models).
+    embeddingModel: "bge-base-en"
+
+    # Your own documents (PDF, .docx, .md, .txt, .html, …), loaded from /app/docs
+    # — one subfolder per collection — and embedded on startup. By default they
+    # are the files baked into the image from src/docs/ at build time.
+    docs:
+      # Keep the 10 synthetic sample documents alongside your files. Set false to
+      # serve only your own documents.
+      includeSamples: true
+      # Mount a PersistentVolumeClaim at /app/docs instead of using the baked-in
+      # files, so documents can be added with `kubectl cp` + a pod restart and no
+      # image rebuild. The PVC replaces (hides) the baked-in src/docs/ files.
+      persistence:
+        enabled: false
+        existingClaim: ""     # use this PVC instead of creating one
+        storageClass: ""      # empty = cluster default StorageClass
+        accessMode: ReadWriteOnce
+        size: 5Gi
+
+    # The server only opens its port once every new/changed document is embedded,
+    # which can take minutes for a large docs folder. The startup probe allows up
+    # to failureThreshold × periodSeconds before Kubernetes restarts the container.
+    startupProbe:
+      periodSeconds: 10
+      failureThreshold: 90    # 15 minutes
+
+    resources:
+      requests:
+        cpu: 100m
+        memory: 256Mi
+      limits:
+        cpu: 500m
+        memory: 512Mi
+
+  # Brave Search (web) MCP server. Serves web/news/image search tools over
+  # Streamable HTTP on port 8080. Requires a Brave Search API key. Set
+  # enabled=false to run internal-knowledge-only (also set agent.enableWebSearch
+  # to "false").
+  brave:
+    enabled: true
+
+    image:
+      repository: knowledge-brave-mcp   # Replace with your registry/image
+      tag: latest
+      pullPolicy: IfNotPresent
+
+    port: 8080
+
+    # Brave Search API key — REQUIRED when brave.enabled is true.
+    # Get one at https://api-dashboard.search.brave.com/. Stored in the chart Secret.
+    apiKey: ""
+
+    # Outbound proxy for calls to api.search.brave.com. This is the only
+    # container that leaves the cluster, so it is the only one that needs it.
+    # Leave empty for direct internet access. no_proxy reuses agent.noProxy.
+    # Node's built-in fetch ignores proxy env vars unless NODE_USE_ENV_PROXY=1,
+    # which the chart sets whenever a proxy is configured (needs Node >= 22.21).
+    httpProxy: ""
+    httpsProxy: ""
+
+    resources:
+      requests:
+        cpu: 50m
+        memory: 128Mi
+      limits:
+        cpu: 250m
+        memory: 256Mi
+
+# ---------------------------------------------------------------------------
+# Shared pgvector (PostgreSQL) connection — vector store for the knowledge MCP
+#
+# The knowledge MCP server embeds the sample documents and your docs-folder files
+# via LiteLLM on startup and stores/searches the vectors in the Agent Toolkit's
+# shared PostgreSQL + pgvector service (agent-toolkit `pgvector_enabled: true`).
+# Like Redis, this is an EXTERNAL dependency — the chart does not deploy a
+# database. Each document is embedded once (into a `knowledge_chunks` table in
+# the shared database) and only re-embedded when it changes.
+#
+# Either set `url` to the full DATABASE_URL from the `pgvector-credentials`
+# secret (recommended — deploy.sh reads it for you), or provide the discrete
+# host/port/database/user plus `password`.
+# ---------------------------------------------------------------------------
+pgvector:
+  # Full connection URL, e.g. postgresql://agentuser:<pass>@pgvector.pgvector.svc.cluster.local:5432/agentdb
+  # When set, it overrides the discrete fields below. Stored in the chart Secret.
+  url: ""
+
+  host: "pgvector.pgvector.svc.cluster.local"
+  port: 5432
+  database: "agentdb"
+  user: "agentuser"
+  password: ""   # from the toolkit's pgvector-credentials secret; set at deploy time
+
+# ---------------------------------------------------------------------------
+# Redis URL — shared Redis from Intel Agent Toolkit (namespace 'redis').
+# Leave credentials out of the URL; the shared Redis requires auth, so set
+# redisPasswordSecret instead.
+# ---------------------------------------------------------------------------
+redisUrl: "redis://redis-stack-server.redis.svc.cluster.local:6379"
+
+# Existing Secret (in the release namespace) holding the Redis password. The
+# chart only references it, so the value never passes through Helm; the agent
+# injects it into redisUrl as the `default` user. deploy.sh copies the REDIS_PASSWORD
+# key of redis/redis-stack-server-credentials into the release namespace and
+# sets the name. Leave name empty for Redis without auth.
+redisPasswordSecret:
+  name: ""
+  key: "REDIS_PASSWORD"
+
+# ---------------------------------------------------------------------------
+# HTTPRoute (Envoy Gateway / Gateway API)
+# The platform exposes services through the shared Envoy Gateway 'eg-gateway'
+# (namespace envoy-gateway-system); TLS is terminated there with the wildcard
+# *.<base_domain_name> certificate, so the chart needs no TLS secret.
+# ---------------------------------------------------------------------------
+httpRoute:
+  enabled: false
+  host: ""            # e.g. knowledge-assistant.solutions.ai  (<name>.<base_domain_name>)
+  path: /
+  gateway:
+    name: eg-gateway
+    namespace: envoy-gateway-system
+    sectionName: https
+  # The gateway-wide SecurityPolicy validates a LiteLLM key on every request.
+  # DevUI has its own bearer token (DEVUI_AUTH_TOKEN), so by default the chart
+  # ships an empty route-level SecurityPolicy that opts this route out.
+  bypassGatewayAuth: true
+
+# ---------------------------------------------------------------------------
+# Chart-wide overrides
+# ---------------------------------------------------------------------------
+nameOverride: ""
+fullnameOverride: ""

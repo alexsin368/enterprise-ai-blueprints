@@ -69,6 +69,30 @@ tm_discover_langfuse() {
   return 0
 }
 
+# PGVECTOR_URL <- DATABASE_URL of the shared pgvector (agent-toolkit
+# pgvector_enabled), Secret <PGVECTOR_NAMESPACE:-pgvector>/pgvector-credentials.
+tm_discover_pgvector() {
+  [[ -z "${PGVECTOR_URL:-}" ]] || return 0
+  local ns="${PGVECTOR_NAMESPACE:-pgvector}"
+  PGVECTOR_URL="$(tm_secret_value "${ns}" pgvector-credentials DATABASE_URL)"
+  [[ -n "${PGVECTOR_URL}" ]] \
+    && success "Auto-discovered pgvector DATABASE_URL (${ns}/pgvector-credentials)."
+  return 0
+}
+
+# Copy a single key of a secret into another namespace (pods can only reference
+# Secrets in their own namespace). The value is piped kubectl -> kubectl still
+# base64-encoded, so it never lands in a shell variable or in Helm values.
+#   tm_copy_secret_key <src-ns> <secret> <key> <dst-ns>
+# Returns non-zero when the source secret/key is missing.
+tm_copy_secret_key() {
+  local src_ns="$1" name="$2" key="$3" dst_ns="$4"
+  [[ -n "$(kubectl get secret -n "${src_ns}" "${name}" -o jsonpath="{.data.${key}}" 2>/dev/null)" ]] || return 1
+  [[ "${src_ns}" != "${dst_ns}" ]] || return 0
+  kubectl get secret -n "${src_ns}" "${name}" -o go-template="{\"apiVersion\":\"v1\",\"kind\":\"Secret\",\"type\":\"Opaque\",\"metadata\":{\"name\":\"${name}\"},\"data\":{\"${key}\":\"{{index .data \"${key}\"}}\"}}" \
+    | kubectl apply -n "${dst_ns}" -f - >/dev/null
+}
+
 # Create the namespace with the labels the platform expects on app namespaces:
 # Pod Security 'restricted' and (when Istio is installed) ambient mesh enrolment,
 # which STRICT mTLS requires to reach LiteLLM / Redis.

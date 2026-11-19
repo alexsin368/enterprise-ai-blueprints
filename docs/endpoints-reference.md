@@ -25,6 +25,7 @@ the same value the deploy scripts call `CLUSTER_URL`.
 | **Coding Agent (LangGraph)** | `http://coding-agent-langgraph.coding-agent.svc.cluster.local:8090` | `https://coding-agent-langgraph.<base>` |
 | **Customer Support Agent** | `http://customer-support-agent.customer-support-agent.svc.cluster.local:8501` (UI) / `:8502` (API) | `https://customer-support-agent.<base>` (`/api`, `/v1` → API; `/` → UI) |
 | **Deep Research Agent** | `http://deep-research-agent.deep-research-agent.svc.cluster.local:8081` (dashboard `:8082`) | `https://deep-research-agent.<base>` (optional `https://deep-research-agent-dashboard.<base>`) |
+| **Knowledge Assistant** | `http://knowledge-assistant.knowledge-assistant.svc.cluster.local:8090` | `https://knowledge-assistant.<base>` |
 
 Reserved platform hostnames (do not reuse for a blueprint): `inference.<base>`,
 `keycloak.<base>`, `grafana.<base>`.
@@ -393,12 +394,15 @@ the full API.
 | Coding Agent (LangGraph) | `coding-agent` / `coding-agent-langgraph:8090` | `coding-agent-langgraph.<base>` | `Authorization: Bearer <DEVUI_AUTH_TOKEN>` on `/v1/*` | `GET /health`, `GET /v1/entities`, `POST /v1/chat/completions`, `POST /v1/responses` |
 | Customer Support Agent | `customer-support-agent` / `customer-support-agent:8501,8502` | `customer-support-agent.<base>` | **none** (demo data only) | `GET /api/v1/health`, `POST /api/v1/chat`, `GET /api/v1/tools`, `POST /v1/chat/completions`; Streamlit UI at `/` |
 | Deep Research Agent | `deep-research-agent` / `deep-research-agent:8081` (`:8082` dashboard) | `deep-research-agent.<base>`, `deep-research-agent-dashboard.<base>` | optional `X-API-Key` on `/api/*` (`API_KEYS`) | `GET /health`, `POST /api/research`, `GET /api/research/{id}/stream` (SSE), `GET /api/research/{id}` |
+| Knowledge Assistant | `knowledge-assistant` / `knowledge-assistant:8090` | `knowledge-assistant.<base>` | `Authorization: Bearer <DEVUI_AUTH_TOKEN>` on `/v1/*` | `GET /v1/entities`, `POST /v1/responses` (DevUI) |
 
-All three routes ship the empty route-level SecurityPolicy
+All four routes ship the empty route-level SecurityPolicy
 (`httpRoute.bypassGatewayAuth: true`), and their namespaces must be listed in
 `litellm_allowed_namespaces`. `customer-support-agent` additionally uses Redis
 and the `bge-base-en` embedding model (add it to `llm_services_autodeploy_models`);
-`deep-research-agent` needs `TAVILY_API_KEY` and internet egress.
+`deep-research-agent` needs `TAVILY_API_KEY` and internet egress. `knowledge-assistant`
+needs pgvector (`pgvector_enabled`), Redis and `bge-base-en`, and internet egress to
+`api.search.brave.com` when web search is on.
 
 ---
 
@@ -430,6 +434,9 @@ kubectl port-forward -n customer-support-agent svc/customer-support-agent 8501:8
 
 # Deep Research Agent
 kubectl port-forward -n deep-research-agent svc/deep-research-agent 8081:8081 &
+
+# Knowledge Assistant (DevUI)
+kubectl port-forward -n knowledge-assistant svc/knowledge-assistant 8093:8090 &
 
 # Langfuse
 kubectl port-forward -n langfuse svc/langfuse-web 3000:3000 &

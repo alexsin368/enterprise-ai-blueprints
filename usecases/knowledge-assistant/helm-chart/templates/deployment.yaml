@@ -1,0 +1,212 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "knowledge-assistant.fullname" . }}
+  labels:
+    {{- include "knowledge-assistant.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.agent.replicaCount }}
+  {{- if .Values.mcp.knowledge.docs.persistence.enabled }}
+  # A ReadWriteOnce docs volume can't be attached to the old and new pod at once,
+  # so stop the old pod before starting the new one.
+  strategy:
+    type: Recreate
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "knowledge-assistant.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+      labels:
+        {{- include "knowledge-assistant.selectorLabels" . | nindent 8 }}
+    spec:
+      serviceAccountName: {{ if .Values.serviceAccount.create }}{{ include "knowledge-assistant.fullname" . }}{{ else }}default{{ end }}
+      # Pod Security Standard 'restricted' (the platform enforces PSS). UID/GID
+      # 10001 matches the numeric user baked into all three images; fsGroup also
+      # makes the optional docs volume readable by the knowledge MCP server.
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      {{- with .Values.agent.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- if .Values.mcp.knowledge.docs.persistence.enabled }}
+      volumes:
+        - name: docs
+          persistentVolumeClaim:
+            claimName: {{ .Values.mcp.knowledge.docs.persistence.existingClaim | default (printf "%s-docs" (include "knowledge-assistant.fullname" .)) }}
+      {{- end }}
+      containers:
+        # --- Container 1: the agent (DevUI on 8090) ---------------------------
+        - name: knowledge-assistant
+          image: "{{ .Values.agent.image.repository }}:{{ .Values.agent.image.tag }}"
+          imagePullPolicy: {{ .Values.agent.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: 8090
+              protocol: TCP
+          envFrom:
+            - configMapRef:
+                name: {{ include "knowledge-assistant.fullname" . }}-config
+            - secretRef:
+                name: {{ include "knowledge-assistant.fullname" . }}-secret
+          {{- if .Values.redisPasswordSecret.name }}
+          # Redis password, referenced from an existing Secret so the value never
+          # passes through Helm. The agent injects it into REDIS_URL.
+          env:
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.redisPasswordSecret.name | quote }}
+                  key: {{ .Values.redisPasswordSecret.key | quote }}
+          {{- end }}
+          livenessProbe:
+            tcpSocket:
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            failureThreshold: 3
+          readinessProbe:
+            tcpSocket:
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            failureThreshold: 3
+          resources:
+            {{- toYaml .Values.agent.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+        # --- Container 2: the internal knowledge (RAG) MCP server sidecar -----
+        - name: knowledge-mcp
+          image: "{{ .Values.mcp.knowledge.image.repository }}:{{ .Values.mcp.knowledge.image.tag }}"
+          imagePullPolicy: {{ .Values.mcp.knowledge.image.pullPolicy }}
+          ports:
+            - name: mcp
+              containerPort: {{ .Values.mcp.knowledge.port }}
+              protocol: TCP
+          # envFrom pulls OPENAI_BASE_URL / OPENAI_API_KEY (gateway embeddings),
+          # EMBEDDING_MODEL, and the PG* connection vars from the shared
+          # ConfigMap/Secret. MCP_HOST/MCP_PORT are set explicitly below.
+          envFrom:
+            - configMapRef:
+                name: {{ include "knowledge-assistant.fullname" . }}-config
+            - secretRef:
+                name: {{ include "knowledge-assistant.fullname" . }}-secret
+          env:
+            - name: MCP_HOST
+              value: "0.0.0.0"
+            - name: MCP_PORT
+              value: {{ .Values.mcp.knowledge.port | quote }}
+            - name: DOCS_DIR
+              value: "/app/docs"
+            - name: INCLUDE_SAMPLE_DOCS
+              value: {{ .Values.mcp.knowledge.docs.includeSamples | quote }}
+          {{- if .Values.mcp.knowledge.docs.persistence.enabled }}
+          volumeMounts:
+            - name: docs
+              mountPath: /app/docs
+          {{- end }}
+          # FastMCP exposes no /health endpoint — use TCP checks. The port only
+          # opens after Postgres is reachable and new/changed documents are
+          # embedded, so the startup probe holds off liveness until then.
+          startupProbe:
+            tcpSocket:
+              port: mcp
+            periodSeconds: {{ .Values.mcp.knowledge.startupProbe.periodSeconds }}
+            failureThreshold: {{ .Values.mcp.knowledge.startupProbe.failureThreshold }}
+          readinessProbe:
+            tcpSocket:
+              port: mcp
+            periodSeconds: 10
+            failureThreshold: 3
+          livenessProbe:
+            tcpSocket:
+              port: mcp
+            periodSeconds: 30
+            failureThreshold: 3
+          resources:
+            {{- toYaml .Values.mcp.knowledge.resources | nindent 12 }}
+          # Inlined literal (not toYaml .Values...) so static IaC scanners can
+          # verify the hardening; runAsUser matches mcpuser in Dockerfile.mcp.
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 10001
+            capabilities:
+              drop:
+                - ALL
+        {{- if .Values.mcp.brave.enabled }}
+        # --- Container 3: the Brave Search (web) MCP server sidecar -----------
+        - name: brave-mcp
+          image: "{{ .Values.mcp.brave.image.repository }}:{{ .Values.mcp.brave.image.tag }}"
+          imagePullPolicy: {{ .Values.mcp.brave.image.pullPolicy }}
+          ports:
+            - name: brave
+              containerPort: {{ .Values.mcp.brave.port }}
+              protocol: TCP
+          env:
+            - name: BRAVE_MCP_TRANSPORT
+              value: "http"
+            - name: BRAVE_MCP_HOST
+              value: "0.0.0.0"
+            - name: BRAVE_MCP_PORT
+              value: {{ .Values.mcp.brave.port | quote }}
+            - name: BRAVE_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "knowledge-assistant.fullname" . }}-secret
+                  key: BRAVE_API_KEY
+            {{- if or .Values.mcp.brave.httpProxy .Values.mcp.brave.httpsProxy }}
+            # Corporate proxy for api.search.brave.com. NODE_USE_ENV_PROXY makes
+            # Node's built-in fetch honour these vars (it ignores them otherwise).
+            - name: NODE_USE_ENV_PROXY
+              value: "1"
+            - name: http_proxy
+              value: {{ .Values.mcp.brave.httpProxy | quote }}
+            - name: HTTP_PROXY
+              value: {{ .Values.mcp.brave.httpProxy | quote }}
+            - name: https_proxy
+              value: {{ .Values.mcp.brave.httpsProxy | default .Values.mcp.brave.httpProxy | quote }}
+            - name: HTTPS_PROXY
+              value: {{ .Values.mcp.brave.httpsProxy | default .Values.mcp.brave.httpProxy | quote }}
+            - name: no_proxy
+              value: {{ .Values.agent.noProxy | quote }}
+            - name: NO_PROXY
+              value: {{ .Values.agent.noProxy | quote }}
+            {{- end }}
+          readinessProbe:
+            tcpSocket:
+              port: brave
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            failureThreshold: 3
+          livenessProbe:
+            tcpSocket:
+              port: brave
+            initialDelaySeconds: 15
+            periodSeconds: 30
+            failureThreshold: 3
+          resources:
+            {{- toYaml .Values.mcp.brave.resources | nindent 12 }}
+          # Inlined literal; runAsUser matches braveuser in Dockerfile.brave.
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 10001
+            capabilities:
+              drop:
+                - ALL
+        {{- end }}

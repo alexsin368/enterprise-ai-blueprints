@@ -1,0 +1,4 @@
+# Your knowledge-base files go here (one subfolder per collection) and are often
+# private, so they're ignored by git. Only this file is tracked, to keep the folder.
+*
+!.gitignore

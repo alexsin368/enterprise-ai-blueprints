@@ -1,0 +1,54 @@
+# Brave Search MCP server (official @brave/brave-search-mcp-server).
+#
+# Runs the Brave Search MCP server over the Streamable HTTP transport so the
+# agent can reach it as a remote MCP client at http://localhost:8080/mcp. This
+# provides the *web* half of the Knowledge Assistant (the internal half is the
+# separate Python "knowledge" MCP server).
+#
+# The server needs a Brave Search API key (BRAVE_API_KEY), injected at runtime
+# via the Helm secret / docker-compose env — never baked into the image.
+#
+# Requires Node >= 22.21: from that release Node's built-in fetch honours
+# http(s)_proxy when NODE_USE_ENV_PROXY=1, which the Helm chart / compose set so
+# the server can reach api.search.brave.com through a corporate proxy. If a
+# cached node:22-slim predates 22.21, pull a fresh one (or use node:24-slim).
+FROM node:22-slim
+
+# Explicit numeric UID/GID so Kubernetes can verify runAsNonRoot.
+RUN groupadd -r -g 10001 braveuser && useradd -r -u 10001 -g braveuser -d /app braveuser
+
+WORKDIR /app
+
+# Proxy build args (passed via --build-arg; needed for npm in proxied envs)
+ARG http_proxy
+ARG https_proxy
+ARG HTTP_PROXY
+ARG HTTPS_PROXY
+ARG no_proxy
+ARG NO_PROXY
+
+# Pin the official Brave Search MCP server package.
+# apt-get upgrade patches base-image OS packages flagged by the image scan.
+RUN apt-get update && apt-get upgrade -y && rm -rf /var/lib/apt/lists/* \
+    && npm install -g @brave/brave-search-mcp-server
+
+RUN chown -R braveuser:braveuser /app
+
+# HTTP transport, bound to all interfaces (required inside a container). The
+# endpoint is unauthenticated, so it is only ever exposed on pod loopback /
+# the compose network — never via a Service or Ingress.
+ENV BRAVE_MCP_TRANSPORT=http \
+    BRAVE_MCP_HOST=0.0.0.0 \
+    BRAVE_MCP_PORT=8080
+
+USER braveuser
+
+EXPOSE 8080
+
+# TCP socket check — the MCP server exposes no dedicated /health endpoint.
+HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
+    CMD node -e "require('net').connect(8080,'localhost').on('connect',p=>process.exit(0)).on('error',()=>process.exit(1))"
+
+# BRAVE_API_KEY is supplied at runtime via env. Transport/host/port come from the
+# BRAVE_MCP_* env vars above.
+CMD ["brave-search-mcp-server"]

@@ -145,6 +145,7 @@ in-cluster service URLs.
 | [coding-agent](usecases/coding-agent/) | Intel® Agent Toolkit | AI coding assistant (LangGraph) that writes and runs Python in Agent Sandbox pods; API-only (OpenAI-compatible `/v1/chat/completions` + `/v1/responses`, bearer token), host `coding-agent-langgraph.<base>` | 8090 (API) | [README](usecases/coding-agent/README.md) |
 | [customer-support-agent](usecases/customer-support-agent/) | Intel® Agent Toolkit | E-commerce support agent with 40 tools over a SQLite demo DB, RediSearch long-term memory (`bge-base-en` embeddings) and parallel tool execution; **no user auth**, host `customer-support-agent.<base>` | 8501 (Streamlit UI), 8502 (API) | [README](usecases/customer-support-agent/README.md) |
 | [deep-research-agent](usecases/deep-research-agent/) | Intel® Agent Toolkit | Autonomous web-research agent (LangGraph) that searches the web (Tavily key required), scores sources and writes a cited report, streamed over SSE; host `deep-research-agent.<base>` (+ optional `-dashboard`) | 8081 (UI + API), 8082 (dashboard) | [README](usecases/deep-research-agent/README.md) |
+| [knowledge-assistant](usecases/knowledge-assistant/) | Intel® Agent Toolkit | RAG knowledge assistant that answers from internal documents in the shared pgvector store (FastMCP RAG sidecar, `bge-base-en` embeddings; add your own PDF/Word/Markdown files) plus optional Brave Search web search (second MCP sidecar, `BRAVE_API_KEY`); Redis memory, host `knowledge-assistant.<base>` | 8090 (DevUI) | [README](usecases/knowledge-assistant/README.md) |
 
 > **Categories** group blueprints by the primary capability they demonstrate
 > (e.g. `Intel® Agent Toolkit`, `Intel® Inference Toolkit`, `RAG`). Adding a use case? Pick or propose
@@ -254,7 +255,9 @@ and warns if the namespace is not yet in `litellm_allowed_namespaces`.
     │   └── ...
     ├── customer-support-agent/
     │   └── ...
-    └── deep-research-agent/
+    ├── deep-research-agent/
+    │   └── ...
+    └── knowledge-assistant/   # RAG over shared pgvector + Brave web search (2 MCP sidecars)
         └── ...
 ```
 

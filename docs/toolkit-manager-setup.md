@@ -46,6 +46,7 @@ litellm_allowed_namespaces:
   - ray-system
   - coding-agent-maf        # blueprint namespaces
   - banking-assistant
+  - knowledge-assistant
 ```
 
 Other switches in `config.agent-toolkit.yaml` that blueprints rely on:
@@ -55,8 +56,9 @@ Other switches in `config.agent-toolkit.yaml` that blueprints rely on:
 | `redis_stack_enabled` | conversational memory (both blueprints) |
 | `agent_sandbox_enabled` | code execution (coding-agent-maf) |
 | `kuberay_enabled` | optional Ray parallel execution |
-| `llm_services_autodeploy_models` | the model(s) to serve — default `["qwen2-5-coder-14b"]` |
-| `pgvector_enabled`, `openshell_enabled`, `guardrails_enabled`, `hybrid_router_enabled` | not required by the shipped blueprints |
+| `llm_services_autodeploy_models` | the model(s) to serve — default `["qwen2-5-coder-14b"]`; add `bge-base-en` for customer-support-agent memory and knowledge-assistant RAG |
+| `pgvector_enabled` | vector store (knowledge-assistant) |
+| `openshell_enabled`, `guardrails_enabled`, `hybrid_router_enabled` | not required by the shipped blueprints |
 
 Then install:
 

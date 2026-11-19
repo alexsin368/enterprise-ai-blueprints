@@ -1,0 +1,22 @@
+{{- $persistence := .Values.mcp.knowledge.docs.persistence }}
+{{- if and $persistence.enabled (not $persistence.existingClaim) }}
+# Volume for the knowledge MCP server's documents (mounted at /app/docs). Kept on
+# uninstall so uploaded documents survive a `helm uninstall` / reinstall.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "knowledge-assistant.fullname" . }}-docs
+  labels:
+    {{- include "knowledge-assistant.labels" . | nindent 4 }}
+  annotations:
+    helm.sh/resource-policy: keep
+spec:
+  accessModes:
+    - {{ $persistence.accessMode }}
+  {{- if $persistence.storageClass }}
+  storageClassName: {{ $persistence.storageClass | quote }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ $persistence.size }}
+{{- end }}
