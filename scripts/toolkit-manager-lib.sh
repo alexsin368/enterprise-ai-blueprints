@@ -142,6 +142,11 @@ tm_check_litellm_access() {
   warn "Or re-run with PATCH_LITELLM_AUTHZ=true to patch the policy directly (temporary)."
 }
 
+# True when the CRD <plural.group> is installed, e.g. httproutes.gateway.networking.k8s.io
+tm_has_crd() {
+  kubectl get crd "$1" &>/dev/null
+}
+
 # Print how to reach a host published on the platform gateway.
 tm_print_gateway_hint() {
   local host="$1" ip

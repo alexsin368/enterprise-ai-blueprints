@@ -264,6 +264,17 @@ build_images
 tm_prepare_namespace "${NAMESPACE}"
 tm_check_litellm_access "${NAMESPACE}"
 
+# Exposure: the HTTPRoute needs the Gateway API CRDs; the gateway-auth bypass
+# SecurityPolicy needs Envoy Gateway's CRDs (the chart skips it without them).
+HTTPROUTE_ENABLED=true
+if ! tm_has_crd httproutes.gateway.networking.k8s.io; then
+  warn "Gateway API CRDs not installed — skipping the HTTPRoute (use kubectl port-forward)."
+  HTTPROUTE_ENABLED=false
+elif ! tm_has_crd securitypolicies.gateway.envoyproxy.io; then
+  warn "Envoy Gateway SecurityPolicy CRD not found — is Envoy Gateway / eg-gateway installed?"
+  warn "Deploying the HTTPRoute without the gateway-auth bypass policy."
+fi
+
 # Redis password: copy only the REDIS_PASSWORD key into NAMESPACE.
 if tm_copy_secret_key redis "${REDIS_SECRET_NAME}" REDIS_PASSWORD "${NAMESPACE}"; then
   success "Copied redis/${REDIS_SECRET_NAME} (REDIS_PASSWORD) into '${NAMESPACE}'."
@@ -304,7 +315,7 @@ HELM_ARGS=(
   --set "mcp.knowledge.docs.includeSamples=${INCLUDE_SAMPLE_DOCS}"
   --set "mcp.knowledge.docs.persistence.enabled=${DOCS_PERSISTENCE}"
   --set-string "mcp.knowledge.docs.persistence.storageClass=${DOCS_STORAGE_CLASS:-}"
-  --set "httpRoute.enabled=true"
+  --set "httpRoute.enabled=${HTTPROUTE_ENABLED}"
   --set "httpRoute.host=${INGRESS_HOST}"
   --wait
   --timeout "${HELM_TIMEOUT}"
@@ -342,8 +353,10 @@ helm "${HELM_ARGS[@]}"
 success "Knowledge Assistant deployed — namespace: ${NAMESPACE}"
 echo ""
 info "Access the Knowledge Assistant:"
-info "  https://${INGRESS_HOST}"
-tm_print_gateway_hint "${INGRESS_HOST}"
+if [[ "${HTTPROUTE_ENABLED}" == "true" ]]; then
+  info "  https://${INGRESS_HOST}"
+  tm_print_gateway_hint "${INGRESS_HOST}"
+fi
 info "  (or locally: kubectl port-forward -n ${NAMESPACE} svc/knowledge-assistant 8090:8090 → http://localhost:8090)"
 info ""
 info "  DevUI login token (enter in the browser login prompt):"

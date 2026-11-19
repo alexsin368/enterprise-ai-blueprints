@@ -1,4 +1,6 @@
-{{- if and .Values.httpRoute.enabled .Values.httpRoute.bypassGatewayAuth }}
+{{- if and .Values.httpRoute.enabled .Values.httpRoute.bypassGatewayAuth (.Capabilities.APIVersions.Has "gateway.envoyproxy.io/v1alpha1/SecurityPolicy") }}
+# Rendered only when Envoy Gateway's SecurityPolicy CRD is installed (no CRD = no
+# gateway-auth policy to bypass).
 # Empty route-level SecurityPolicy: overrides the gateway-wide 'gateway-auth'
 # policy (LiteLLM key check) for this route only. The DevUI enforces its own
 # DEVUI_AUTH_TOKEN bearer token. Same pattern the platform uses for LiteLLM/Langfuse.
