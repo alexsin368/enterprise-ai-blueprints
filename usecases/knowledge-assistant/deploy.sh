@@ -199,12 +199,14 @@ prompt_if_empty CLUSTER_URL \
 
 prompt_secret_if_empty OPENAI_API_KEY \
   "LiteLLM API key (OPENAI_API_KEY)"
+[[ -n "${OPENAI_API_KEY}" ]] || die "OPENAI_API_KEY is empty. Export it (set -a && source config.local.env && set +a; don't run under sudo), or allow reading litellm/litellm-master-key."
 
 # KNOWLEDGE_MODEL_NAME lets this use case call a different model (e.g. a router)
 # than the MODEL_NAME shared by every blueprint in config.env.
 MODEL_NAME="${KNOWLEDGE_MODEL_NAME:-${MODEL_NAME:-}}"
 prompt_if_empty MODEL_NAME \
   "Model name registered in the gateway (must support tool calling)"
+[[ -n "${MODEL_NAME}" ]] || die "MODEL_NAME (or KNOWLEDGE_MODEL_NAME) is required."
 
 prompt_if_empty EMBEDDING_MODEL \
   "Embedding model in LiteLLM (for the pgvector knowledge store)" \

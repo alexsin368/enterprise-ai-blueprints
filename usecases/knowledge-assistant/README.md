@@ -139,10 +139,16 @@ terminated at the gateway, so no certificate is needed. On containerd clusters i
 builds with nerdctl into the `k8s.io` namespace so the kubelet can use the images
 locally (`pullPolicy: IfNotPresent`).
 
-From the repo root, using the shared `config.local.env`:
+From the repo root, using the shared `config.local.env`, set the following environment 
+variables:
+- `CLUSTER_URL`: the base domain name used to install Agent Toolkit
+- `OPENAI_API_KEY`: the LiteLLM master key
+- `MODEL_NAME`: name of the model as defined in LiteLLM (default qwen2-5-coder-14b)
+- `KNOWLEDGE_MODEL_NAME`: optional, overrides `MODEL_NAME`
+- `BRAVE_API_KEY`: for web search
 
 ```bash
-cp config.env config.local.env && $EDITOR config.local.env   # MODEL_NAME, BRAVE_API_KEY, ...
+cp config.env config.local.env && $EDITOR config.local.env
 set -a && source config.local.env && set +a
 ./deploy-usecase.sh knowledge-assistant --mode kubernetes
 ```
